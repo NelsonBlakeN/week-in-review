@@ -1,6 +1,5 @@
 import axios from 'axios'
-const util = require('util')
-const API_TOKEN = '7ae73ab884f0b45af921fc646a2787eb3def9d5d';
+import { API_TOKEN } from './credentials';
 
 interface Task {
   id: string;
