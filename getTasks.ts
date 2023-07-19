@@ -10,17 +10,115 @@ interface Task {
   content: string;
 }
 
-const WORK_FILTER_ID = '2336225525'
-const RESPONSIBILITIES_QUEUE = '2332618756'
-const ACTIVE_PROJECTS_QUEUE = '2339564398'
-const TOMORROW_QUEUE = '2331337042'
+interface ReportInfo {
+  content: string,
+  projectName: string,
+  dueDate: string,
+  filter: string,
+}
 
-const filtersToSkip = [
-  WORK_FILTER_ID,
-  RESPONSIBILITIES_QUEUE,
-  ACTIVE_PROJECTS_QUEUE,
-  TOMORROW_QUEUE
+const filters = [
+  {
+    filterString: '/Fixed date & overdue',
+    groupAndSort: (tasks: Task[]) => {
+      let groupedTasks = new Map<string, Task[]>();
+      const unsortedGroups = new Map<string, Task[]>();
+
+      tasks.forEach((task) => {
+        const projectId = task.project_id
+        if (!unsortedGroups.has(projectId)) {
+          unsortedGroups.set(projectId, [])
+        }
+        unsortedGroups.get(projectId)?.push(task)
+      })
+
+      projectsOrder.forEach((projectId) => {
+        if (unsortedGroups.has(projectId)) {
+          const sortedTasks = unsortedGroups.get(projectId)?.sort((a, b) => a.due.date.localeCompare(b.due.date))
+          if (sortedTasks) {
+            groupedTasks.set(projectId, sortedTasks)
+          }
+        }
+      });
+
+      return groupedTasks
+    },
+  },
+  {
+    filterString: '/Fixed date & due before: Monday & !overdue',
+    groupAndSort: (tasks: Task[]) => {
+      // Grouped by sorted project, sorted by due date
+      let groupedTasks = new Map<string, Task[]>();
+      const unsortedGroups = new Map<string, Task[]>();
+
+      tasks.forEach((task) => {
+        const projectId = task.project_id
+        if (!unsortedGroups.has(projectId)) {
+          unsortedGroups.set(projectId, [])
+        }
+        unsortedGroups.get(projectId)?.push(task)
+      })
+
+      projectsOrder.forEach((projectId) => {
+        if (unsortedGroups.has(projectId)) {
+          const sortedTasks = unsortedGroups.get(projectId)?.sort((a, b) => a.due.date.localeCompare(b.due.date))
+          if (sortedTasks) {
+            groupedTasks.set(projectId, sortedTasks)
+          }
+        }
+      });
+
+      return groupedTasks
+    },
+  },
+  {
+    filterString: '/Chore rotation & (overdue | due: Sunday)',
+    groupAndSort: (tasks: Task[]) => {
+      const sortedTasks = tasks.sort((a, b) => a.due.date.localeCompare(b.due.date));
+      return new Map<string, Task[]>([
+        [tasks[0].project_id, sortedTasks]
+      ])
+    },
+  },
+  {
+    filterString: '(due: Sunday|overdue) & !/Fixed date & !##Work & !/Chore rotation',
+    groupAndSort: (tasks: Task[]) => {
+      // Grouped by sorted project, sorted by due date
+      let groupedTasks = new Map<string, Task[]>();
+      const unsortedGroups = new Map<string, Task[]>();
+
+      tasks.forEach((task) => {
+        const projectId = task.project_id
+        if (!unsortedGroups.has(projectId)) {
+          unsortedGroups.set(projectId, [])
+        }
+        unsortedGroups.get(projectId)?.push(task)
+      })
+
+      projectsOrder.forEach((projectId) => {
+        if (unsortedGroups.has(projectId)) {
+          const sortedTasks = unsortedGroups.get(projectId)?.sort((a, b) => a.due.date.localeCompare(b.due.date))
+          if (sortedTasks) {
+            groupedTasks.set(projectId, sortedTasks)
+          }
+        }
+      });
+
+      return groupedTasks
+    },
+  },
 ]
+
+const TASK_ENDPOINT = 'https://api.todoist.com/rest/v2/tasks'
+const SYNC_ENDPOINT = 'https://api.todoist.com/sync/v9/sync'
+
+const report = new Map<string, ReportInfo[]>([
+  ['Top 14', []],
+  ['Remaining', []],
+  ['Queues', []]
+])
+
+let reachedOverflow = false
 
 const projectsOrder = [
   '2155628036', '2303052907', '2315597514', '2255425331',
@@ -43,88 +141,56 @@ const projectsOrder = [
   '2312828935', '2312828966', '2312829030', '2312829441'
 ];
 
-function groupAndSortTasks(tasks: Task[], filterId: string): Map<string, string[]> {
-  let groupedTasks = new Map<string, string[]>();
-
-  if (filterId === '2336271337' || filterId === '2334565705') {
-    const unsortedGroups = new Map<string, Task[]>();
-
-    tasks.forEach((task) => {
-      const projectId = task.project_id
-      if (!unsortedGroups.has(projectId)) {
-        unsortedGroups.set(projectId, [])
-      }
-      unsortedGroups.get(projectId)?.push(task)
-    })
-
-    projectsOrder.forEach((projectId) => {
-      if (unsortedGroups.has(projectId)) {
-        const sortedTasks = unsortedGroups.get(projectId)?.sort((a, b) => a.due.date.localeCompare(b.due.date))
-        if (sortedTasks) {
-          groupedTasks.set(projectId, sortedTasks.map(t => t.content))
-        }
-      }
-    });
-  } else if (filterId === '2333322928') {
-    const sortedTasks = tasks.sort((a, b) => a.due.date.localeCompare(b.due.date));
-    groupedTasks.set(filterId, sortedTasks.map(t => t.content));
+function getCurrentHeader() {
+  if (reachedOverflow) {
+    return 'Remaining'
   }
 
-  return groupedTasks;
+  if (report.get('Top 14')!.length < 14) {
+    return 'Top 14'
+  }
+
+  reachedOverflow = true
+  return 'Remaining'
 }
 
-async function getAllTasksFromFavoriteFilters() {
-  try {
-    // Fetch filters
-    const filtersResponse = await axios.get('https://api.todoist.com/sync/v9/sync', {
+async function generateReport() {
+  for (const f in filters) {
+    await axios.get(TASK_ENDPOINT, {
       headers: {
         Authorization: `Bearer ${API_TOKEN}`,
       },
       params: {
-        resource_types: '["filters"]'
+        filter: filters[f].filterString
       }
-    });
-    const filters = filtersResponse.data.filters
-
-    // Filter favorite filters
-    const favorites = filters.filter((filter) => filter.is_favorite && !filtersToSkip.includes(filter.id));
-
-    // Fetch tasks for each favorite filter
-    const tasks: Task[] = [];
-
-    for (const favorite of favorites) {
-      const tasksResponse = await axios.get(
-        `https://api.todoist.com/rest/v2/tasks`,
-        {
-          headers: {
-            Authorization: `Bearer ${API_TOKEN}`,
-          },
-          params: {
-            filter: favorite.query
-          }
+    })
+    .then(response => {
+      const sortedTasks = filters[f].groupAndSort(response.data)
+      sortedTasks.forEach((tasks, projectId) => {
+        for (let task of tasks) {
+          report.get(getCurrentHeader())?.push({
+            content: task.content,
+            projectName: projectId,
+            dueDate: task.due.date,
+            filter: filters[f].filterString
+          })
         }
-      );
-
-      const groupedTasks = groupAndSortTasks(tasksResponse.data, favorite.id)
-      console.log(favorite.name, ':', groupedTasks)
-
-      const filterTasks = tasksResponse.data.filter((t: Task) => t.due !== null);
-      tasks.push(...filterTasks);
-    }
-
-    return tasks;
-  } catch (error) {
-    console.error('Error fetching tasks from favorite filters:', error);
-    throw error;
+      })
+    })
+    .catch(error => {
+      console.log(error)
+    })
   }
+
+  // TODO: If necessary, get queue tasks
 }
 
-getAllTasksFromFavoriteFilters()
-  .then((tasks) => {
-    // Process the tasks as needed
-    console.log(tasks?.length);
+async function sendReport() {
+  console.log('Sending report')
+  console.log(report)
+}
+
+generateReport()
+  .then(() => {
+    sendReport()
   })
-  .catch((error) => {
-    // Handle errors
-    console.error(error);
-  });
