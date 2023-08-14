@@ -10,7 +10,7 @@ const TASK_ENDPOINT = 'https://api.todoist.com/rest/v2/tasks';
 const filters = [
     {
       filterString: '/Fixed date & overdue',
-      groupAndSort: function (tasks) {
+      groupAndSort: function (tasks, projectOrder) {
         let groupedTasks = new Map();
         const unsortedGroups = new Map();
 
@@ -22,7 +22,7 @@ const filters = [
           unsortedGroups.get(projectId).push(task);
         });
 
-        projectsOrder.forEach((projectId) => {
+        projectOrder.forEach((projectId) => {
           if (unsortedGroups.has(projectId)) {
             const sortedTasks = unsortedGroups.get(projectId).sort((a, b) => a.due.date.localeCompare(b.due.date));
             if (sortedTasks) {
@@ -36,7 +36,7 @@ const filters = [
     },
     {
       filterString: '/Fixed date & due before: next Monday & !overdue',
-      groupAndSort: function (tasks) {
+      groupAndSort: function (tasks, projectOrder) {
         let groupedTasks = new Map();
         const unsortedGroups = new Map();
 
@@ -48,7 +48,7 @@ const filters = [
           unsortedGroups.get(projectId).push(task);
         });
 
-        projectsOrder.forEach((projectId) => {
+        projectOrder.forEach((projectId) => {
           if (unsortedGroups.has(projectId)) {
             const sortedTasks = unsortedGroups.get(projectId).sort((a, b) => a.due.date.localeCompare(b.due.date));
             if (sortedTasks) {
@@ -62,14 +62,14 @@ const filters = [
     },
     {
       filterString: '/Chore rotation & (overdue | due: Sunday)',
-      groupAndSort: function (tasks) {
+      groupAndSort: function (tasks, projectOrder) {
         const sortedTasks = tasks.sort((a, b) => a.due.date.localeCompare(b.due.date));
         return new Map([[tasks[0].project_id, sortedTasks]]);
       },
     },
     {
       filterString: '(due: Sunday|overdue) & !/Fixed date & !##Work & !/Chore rotation',
-      groupAndSort: function (tasks) {
+      groupAndSort: function (tasks, projectOrder) {
         let groupedTasks = new Map();
         const unsortedGroups = new Map();
 
@@ -81,7 +81,7 @@ const filters = [
           unsortedGroups.get(projectId).push(task);
         });
 
-        projectsOrder.forEach((projectId) => {
+        projectOrder.forEach((projectId) => {
           if (unsortedGroups.has(projectId)) {
             const sortedTasks = unsortedGroups.get(projectId).sort((a, b) => a.due.date.localeCompare(b.due.date));
             if (sortedTasks) {
@@ -104,27 +104,6 @@ const report = new Map([
 
 let reachedOverflow = false;
 
-const projectsOrder = [
-    '2155628036', '2303052907', '2315597514', '2255425331',
-    '2303053885', '2286704076', '2239149688', '2303052901',
-    '2239149781', '2302539351', '2304032931', '2304032780',
-    '2310076840', '2301640874', '2290056625', '2301754909',
-    '2297991071', '2155630577', '2286812851', '2272637270',
-    '2298384388', '2298100835', '2300035739', '2298100837',
-    '2298100836', '2297630460', '2290056777', '2298100838',
-    '2299491561', '2249710309', '2303053899', '2302064342',
-    '2297564363', '2297564382', '2298135558', '2298135996',
-    '2270037482', '2298291516', '2298291708', '2300064891',
-    '2297564416', '2260304064', '2287052310', '2214035701',
-    '2214035741', '2214035745', '2214035751', '2214035764',
-    '2214046659', '2214066347', '2214097118', '2214297185',
-    '2312829090', '2286682174', '2289518157', '2239149660',
-    '2286682144', '2290056703', '2312829248', '2314209687',
-    '2296608472', '2312829323', '2312829416', '2312829376',
-    '2312828819', '2312828833', '2312828847', '2312828861',
-    '2312828935', '2312828966', '2312829030', '2312829441'
-  ];
-
 function getCurrentHeader() {
   if (reachedOverflow) {
     return 'Remaining';
@@ -140,6 +119,14 @@ function getCurrentHeader() {
 
 async function generateReport() {
   try {
+    const projectData = (await axios.get("https://api.todoist.com/rest/v2/projects", {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+      }
+    })).data
+    const projects = new Map(projectData.map(proj => [proj.id, proj.name]))
+    const projectOrder = projectData.map(obj => obj.id)
+
     for (const f in filters) {
       const response = await axios.get(TASK_ENDPOINT, {
         headers: {
@@ -150,13 +137,13 @@ async function generateReport() {
         }
       });
 
-      const sortedTasks = filters[f].groupAndSort(response.data);
+      const sortedTasks = filters[f].groupAndSort(response.data, projectOrder);
 
       sortedTasks.forEach((tasks, projectId) => {
         for (let task of tasks) {
           report.get(getCurrentHeader()).push({
             content: task.content,
-            projectName: projectId,
+            projectName: projects.get(projectId),
             dueDate: task.due.date,
             filter: filters[f].filterString
           });
@@ -274,7 +261,7 @@ const handler = async (event, context) => {
   };
 };
 
-module.exports = { handler };
+module.exports = { handler, generateReport };
 
 // TODO: Investigate if I can create a different zip using typescript
 // If I can't create the zip using typescript, maybe there are more streamlined ways of doing the deployment
